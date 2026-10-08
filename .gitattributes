@@ -1,0 +1,25 @@
+# 默认：文本文件在仓库内统一用 LF，检出时按平台转换
+* text=auto
+
+# 第三方压缩库：绝对不允许做换行符转换（单行压缩 JS，转换即损坏）
+reader/lib/*.min.js -text -diff
+reader/lib/epub.min.js -text -diff
+reader/lib/jszip.min.js -text -diff
+
+# 二进制文件
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.otf binary
+*.eot binary
+*.pdf binary
+*.zip binary
+*.epub binary
+*.pbix binary
+*.pbip binary
