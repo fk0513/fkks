@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>fkks-reader 测试</title>
+<style>
+  body { font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif; padding: 24px; background: #f7f7f9; color: #1c1c1e; }
+  h1 { font-size: 18px; }
+  #summary { padding: 12px 16px; border-radius: 8px; font-weight: 600; margin-bottom: 16px; }
+  .pass { background: #dcfce7; color: #166534; }
+  .fail { background: #fee2e2; color: #991b1b; }
+  .case { padding: 8px 12px; border-bottom: 1px solid #e5e7eb; font-size: 14px; display: flex; gap: 10px; }
+  .case .mark { width: 20px; flex: 0 0 auto; font-weight: 700; }
+  .ok .mark { color: #16a34a; }
+  .no .mark { color: #dc2626; }
+  .case .name { flex: 1; }
+  .case .err { color: #991b1b; font-size: 12px; white-space: pre-wrap; }
+  button { padding: 8px 16px; border-radius: 6px; border: 1px solid #d1d5db; background: #fff; cursor: pointer; }
+</style>
+</head>
+<body>
+<h1>fkks-reader · 存储层与解析层测试</h1>
+<div id="summary">运行中…</div>
+<div id="results"></div>
+<p><button id="rerun">重新运行</button></p>
+
+<script src="../lib/db.js"></script>
+<script src="../lib/parsers.js"></script>
+<script>
+(function () {
+  var results = [];
+  var el = document.getElementById('results');
+  var summary = document.getElementById('summary');
+
+  function assert(name, cond, detail) {
+    results.push({ name: name, ok: !!cond, detail: cond ? '' : (detail || '断言失败') });
+  }
+
+  function eq(name, actual, expected) {
+    var ok = actual === expected;
+    results.push({
+      name: name, ok: ok,
+      detail: ok ? '' : '期望 ' + JSON.stringify(expected) + '，实际 ' + JSON.stringify(actual)
+    });
+  }
+
+  function run() {
+    results = [];
+    el.innerHTML = '';
+
+    var testBookId = null;
+    var testAnnId = null;
+
+    DB.clearAll()
+      .then(function () { return DB.open(); })
+
+      /* ---------- 存储层 ---------- */
+      .then(function () {
+        return DB.addBook({
+          title: '测试书', author: '张三', format: 'txt',
+          file: new Blob(['这是一本测试书的内容'], { type: 'text/plain' }),
+          fileSize: 22, chapterCount: 3
+        });
+      })
+      .then(function (rec) {
+        testBookId = rec.id;
+        assert('addBook 返回记录含 id', !!rec.id);
+        eq('addBook 标题正确', rec.title, '测试书');
+        assert('addBook 自动写入 importedAt', typeof rec.importedAt === 'number');
+        return DB.getBook(rec.id);
+      })
+      .then(function (b) {
+        eq('getBook 能取回', b.title, '测试书');
+        assert('getBook 文件 Blob 完整', b.file instanceof Blob && b.file.size > 0);
+      })
+      .then(function () { return DB.getBooks(); })
+      .then(function (list) {
+        eq('getBooks 数量', list.length, 1);
+      })
+
+      /* 进度 */
+      .then(function () {
+        return DB.saveProgress(testBookId, { location: 'chapter:2', percentage: 33.3, chapterIndex: 2, chapterLabel: '第三章' });
+      })
+      .then(function () { return DB.getProgress(testBookId); })
+      .then(function (p) {
+        eq('saveProgress/getProgress 百分比', p.percentage, 33.3);
+        eq('saveProgress/getProgress 章节', p.chapterIndex, 2);
+        eq('saveProgress 章节标签', p.chapterLabel, '第三章');
+      })
+
+      /* 标注 */
+      .then(function () {
+        return DB.addAnnotation({
+          bookId: testBookId, color: 'green', range: 'txt:2:5:测试文本',
+          text: '测试文本', chapterIndex: 2, chapterLabel: '第三章'
+        });
+      })
+      .then(function (a) {
+        testAnnId = a.id;
+        assert('addAnnotation 生成 id', !!a.id);
+        eq('addAnnotation 默认类型 highlight', a.type, 'highlight');
+        return DB.getAnnotations(testBookId);
+      })
+      .then(function (list) {
+        eq('getAnnotations 数量', list.length, 1);
+      })
+      .then(function () { return DB.updateAnnotation(testAnnId, { note: '我的批注', type: 'note' }); })
+      .then(function () { return DB.getAnnotations(testBookId); })
+      .then(function (list) {
+        eq('updateAnnotation 笔记内容', list[0].note, '我的批注');
+        eq('updateAnnotation 类型升级为 note', list[0].type, 'note');
+      })
+
+      /* 设置 */
+      .then(function () { return DB.getSettings(testBookId); })
+      .then(function (s) {
+        eq('getSettings 无记录时返回默认字号', s.fontSize, 18);
+        eq('getSettings 默认主题', s.theme, 'light');
+        return DB.saveSettings(testBookId, { fontSize: 24, theme: 'dark', lineHeight: 2.0, fontFamily: 'serif', flow: 'scrolled', tapFlip: false });
+      })
+      .then(function () { return DB.getSettings(testBookId); })
+      .then(function (s) {
+        eq('saveSettings 字号', s.fontSize, 24);
+        eq('saveSettings 主题', s.theme, 'dark');
+        eq('saveSettings 保留 bookId', s.bookId, testBookId);
+      })
+
+      /* 备份导出 */
+      .then(function () { return DB.exportAll(); })
+      .then(function (json) {
+        var data = JSON.parse(json);
+        eq('exportAll 包含 1 本书', data.books.length, 1);
+        eq('exportAll 包含 1 条标注', data.annotations.length, 1);
+        assert('exportAll 书籍文件已内联为 base64', !!data.books[0].fileB64 && data.books[0].fileB64.indexOf('data:') === 0);
+        eq('exportAll 不残留 file 字段', data.books[0].file, null);
+      })
+
+      /* 级联删除 */
+      .then(function () { return DB.deleteBook(testBookId); })
+      .then(function () { return DB.getBooks(); })
+      .then(function (list) { eq('deleteBook 后书籍清空', list.length, 0); })
+      .then(function () { return DB.getAnnotations(testBookId); })
+      .then(function (list) { eq('deleteBook 级联清除标注', list.length, 0); })
+      .then(function () { return DB.getProgress(testBookId); })
+      .then(function (p) { assert('deleteBook 级联清除进度', p == null); })
+
+      /* ---------- 解析层：TXT 编码 ---------- */
+      .then(function () {
+        // UTF-8 中文
+        var enc = new TextEncoder();
+        var buf = enc.encode('第一章 开始\n\n这是正文内容。');
+        var r = Parsers.decodeBuffer(buf);
+        eq('decodeBuffer 识别 UTF-8', r.encoding, 'utf-8');
+        assert('decodeBuffer UTF-8 中文正确', r.text.indexOf('第一章') === 0);
+      })
+      .then(function () {
+        // UTF-8 BOM
+        var enc = new TextEncoder();
+        var body = enc.encode('你好世界');
+        var buf = new Uint8Array([0xEF, 0xBB, 0xBF].concat(Array.from(body))).buffer;
+        var r = Parsers.decodeBuffer(buf);
+        assert('decodeBuffer 识别 BOM', r.encoding.indexOf('BOM') > -1);
+        assert('decodeBuffer 剥离 BOM 后内容正确', r.text.indexOf('\uFEFF') === -1 && r.text === '你好世界');
+      })
+      .then(function () {
+        // GBK「你好」= C4 E3 BA C3
+        var buf = new Uint8Array([0xC4, 0xE3, 0xBA, 0xC3]).buffer;
+        var r = Parsers.decodeBuffer(buf);
+        assert('decodeBuffer 回退 GBK', r.encoding !== 'utf-8' && r.encoding !== 'utf-8 (fallback)');
+        eq('decodeBuffer GBK 解码结果', r.text, '你好');
+      })
+
+      /* ---------- 解析层：分章 ---------- */
+      .then(function () {
+        eq('isChapterTitle 识别「第一章 xxx」', Parsers.isChapterTitle('第一章 风起'), true);
+        eq('isChapterTitle 识别「第1章」', Parsers.isChapterTitle('第1章 启程'), true);
+        eq('isChapterTitle 识别「Chapter 3」', Parsers.isChapterTitle('Chapter 3 The Road'), true);
+        eq('isChapterTitle 识别「序章」', Parsers.isChapterTitle('序章'), true);
+        eq('isChapterTitle 普通句子不误判', Parsers.isChapterTitle('他走进了那间屋子。'), false);
+        eq('isChapterTitle 超长行不误判', Parsers.isChapterTitle('第一章 ' + '很长'.repeat(40)), false);
+      })
+      .then(function () {
+        var text = '第一章 开端\n\n内容一\n\n第二章 发展\n\n内容二\n\n第三章 结尾\n\n内容三';
+        var ch = Parsers.splitChapters(text);
+        eq('splitChapters 章节数', ch.length, 3);
+        eq('splitChapters 首章标题', ch[0].title, '第一章 开端');
+        eq('splitChapters 末章标题', ch[2].title, '第三章 结尾');
+        assert('splitChapters 章节内容正确', ch[1].content.indexOf('内容二') > -1);
+      })
+      .then(function () {
+        // 无章节的纯文本 → 兜底分块
+        var text = '啊'.repeat(7000);
+        var ch = Parsers.splitChapters(text);
+        assert('splitChapters 无章节时兜底分块', ch.length >= 2);
+      })
+      .then(function () {
+        var ch = Parsers.splitChapters('只有一段文字，没有任何章节标记。');
+        eq('splitChapters 短文本兜底为 1 节', ch.length, 1);
+      })
+
+      /* ---------- 工具 ---------- */
+      .then(function () {
+        eq('uid 生成唯一值', DB.uid() === DB.uid(), false);
+      })
+
+      .catch(function (err) {
+        results.push({ name: '运行时异常', ok: false, detail: String(err && err.stack || err) });
+      })
+
+      .then(function () {
+        var passed = results.filter(function (r) { return r.ok; }).length;
+        var total = results.length;
+        var failed = total - passed;
+
+        summary.textContent = '通过 ' + passed + ' / ' + total + (failed ? '　失败 ' + failed : '　✅ 全部通过');
+        summary.className = failed ? 'fail' : 'pass';
+
+        results.forEach(function (r) {
+          var d = document.createElement('div');
+          d.className = 'case ' + (r.ok ? 'ok' : 'no');
+          d.innerHTML = '<span class="mark">' + (r.ok ? '✓' : '✗') + '</span>' +
+                        '<span class="name">' + r.name +
+                        (r.detail ? '<div class="err">' + r.detail + '</div>' : '') + '</span>';
+          el.appendChild(d);
+        });
+
+        window.__TEST_RESULT__ = { passed: passed, total: total, failed: failed, results: results };
+
+        // 便于无头环境抓取：把结果写进 DOM 的 data 属性 + 可见文本
+        var payload = JSON.stringify({ passed: passed, total: total, failed: failed, results: results });
+        document.body.setAttribute('data-test-result', encodeURIComponent(payload));
+        var pre = document.createElement('pre');
+        pre.id = 'json-result';
+        pre.style.display = 'none';
+        pre.textContent = payload;
+        document.body.appendChild(pre);
+      });
+  }
+
+  document.getElementById('rerun').addEventListener('click', run);
+  run();
+})();
+</script>
+</body>
+</html>
