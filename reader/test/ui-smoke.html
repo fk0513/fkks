@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head><meta charset="UTF-8"><title>UI 冒烟测试</title></head>
+<body>
+<div id="out">running</div>
+<pre id="log"></pre>
+<iframe id="app" src="../index.html" style="width:1280px;height:800px;border:1px solid #ccc"></iframe>
+<script>
+/**
+ * ui-smoke.html —— 浏览器渲染冒烟测试
+ *
+ * 把 index.html 加载进 iframe（同源），检查：
+ *   1. 所有初始带 hidden 属性的元素，computed display 必须是 none
+ *      （防回归：CSS 的 display:flex 压过 hidden 属性导致浮层全部常驻）
+ *   2. 关键脚本（DB / ePub / Parsers / TxtReader）已加载
+ *
+ * 结果写入 body[data-result]（URL 编码的 JSON），供无头环境抓取。
+ */
+(function () {
+  var iframe = document.getElementById('app');
+
+  iframe.addEventListener('load', function () {
+    try {
+      run();
+    } catch (err) {
+      document.getElementById('out').textContent = 'smoke error: ' + err.message;
+      document.body.setAttribute('data-result', encodeURIComponent(JSON.stringify({
+        passed: 0, total: 1, failed: 1,
+        results: [{ name: '冒烟测试运行', ok: false, detail: String(err && err.stack || err) }]
+      })));
+    }
+  });
+
+  function run() {
+    var doc = iframe.contentDocument;
+    var win = iframe.contentWindow;
+    var results = [];
+
+    function check(name, cond, detail) {
+      results.push({ name: name, ok: !!cond, detail: cond ? '' : (detail || '失败') });
+    }
+
+    /* 1. 初始隐藏的元素必须真的不可见 */
+    var hiddenIds = [
+      'view-reader', 'drop-overlay', 'txt-viewer', 'reader-loading',
+      'panel-toc', 'panel-notes', 'panel-settings', 'panel-backdrop',
+      'selection-bar', 'note-editor', 'file-input', 'restore-input', 'toast'
+    ];
+    hiddenIds.forEach(function (id) {
+      var el = doc.getElementById(id);
+      if (!el) {
+        check('#' + id + ' 应隐藏', false, '元素不存在');
+        return;
+      }
+      var hasAttr = el.hasAttribute('hidden');
+      var disp = win.getComputedStyle(el).display;
+      check('#' + id + ' hidden 属性生效（display:none）',
+        hasAttr && disp === 'none',
+        'hidden属性=' + hasAttr + '，computed.display=' + disp);
+    });
+
+    /* 2. 初始可见的元素必须真的可见 */
+    ['view-shelf', 'shelf-grid'].forEach(function (id) {
+      var el = doc.getElementById(id);
+      var disp = el ? win.getComputedStyle(el).display : '(不存在)';
+      check('#' + id + ' 正常可见', !!el && disp !== 'none', 'display=' + disp);
+    });
+
+    /* 3. 脚本加载检查 */
+    check('DB（存储层）已加载', typeof win.DB === 'object' && win.DB !== null,
+      'typeof DB = ' + typeof win.DB);
+    check('ePub（epub.js）已加载', typeof win.ePub === 'function',
+      'typeof ePub = ' + typeof win.ePub);
+    check('Parsers（解析层）已加载', typeof win.Parsers === 'object' && win.Parsers !== null,
+      'typeof Parsers = ' + typeof win.Parsers);
+    check('TxtReader 已加载', typeof win.TxtReader === 'function',
+      'typeof TxtReader = ' + typeof win.TxtReader);
+
+    /* 4. 书架初始状态：空书架时应显示引导文案（由 JS 决定，只记录不断言） */
+    var shelfEmpty = doc.getElementById('shelf-empty');
+    results.push({
+      name: '（信息）shelf-empty 当前状态', ok: true,
+      detail: 'hidden=' + (shelfEmpty ? shelfEmpty.hasAttribute('hidden') : 'n/a')
+    });
+
+    /* 输出结果 */
+    var passed = results.filter(function (r) { return r.ok; }).length;
+    var failed = results.length - passed;
+    document.getElementById('out').textContent =
+      '通过 ' + passed + ' / ' + results.length + (failed ? ' —— 有失败项' : ' —— 全部通过');
+    document.title = (failed ? 'FAIL ' : 'PASS ') + passed + '/' + results.length;
+
+    var payload = JSON.stringify({
+      passed: passed, total: results.length, failed: failed, results: results
+    });
+    document.body.setAttribute('data-result', encodeURIComponent(payload));
+    var pre = document.createElement('pre');
+    pre.id = 'json-result';
+    pre.textContent = payload;
+    document.body.appendChild(pre);
+  }
+})();
+</script>
+</body>
+</html>

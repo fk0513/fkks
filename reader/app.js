@@ -1330,6 +1330,7 @@
       document.documentElement.setAttribute('data-theme', 'light');
       bindEvents();
       route();
+      window.__APP_BOOTED__ = true;
     }).catch(function (err) {
       alert('数据库初始化失败：' + (err && err.message ? err.message : '未知错误'));
     });

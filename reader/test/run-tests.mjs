@@ -665,6 +665,33 @@ async function main() {
     }
   });
 
+  suite('UI · CSS 回归守卫');
+
+  test('styles.css 必须包含 [hidden] 兜底规则', () => {
+    const css = fs.readFileSync(path.join(ROOT, 'styles.css'), 'utf8');
+    const re = /\[hidden\]\s*\{[^}]*display:\s*none\s*!important[^}]*\}/;
+    ok(re.test(css), '缺少 [hidden] { display:none !important } —— 没有它，'
+      + 'display:flex/grid 的浮层类会压过 hidden 属性，导致目录/设置/笔记等浮层全部常驻显示');
+  });
+
+  test('index.html 引用的本地脚本全部存在', () => {
+    const html = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
+    const srcs = [...html.matchAll(/<script\s+src="([^"]+)"/g)].map((m) => m[1]);
+    ok(srcs.length >= 5, '应有至少 5 个本地脚本，实际 ' + srcs.length);
+    for (const src of srcs) {
+      const p = path.join(ROOT, src);
+      ok(fs.existsSync(p), '脚本不存在: ' + src);
+    }
+  });
+
+  test('index.html 引用的样式表存在', () => {
+    const html = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
+    const hrefs = [...html.matchAll(/<link\s+rel="stylesheet"\s+href="([^"]+)"/g)].map((m) => m[1]);
+    for (const href of hrefs) {
+      ok(fs.existsSync(path.join(ROOT, href)), '样式不存在: ' + href);
+    }
+  });
+
   /* ---------------- 输出 ---------------- */
 
   printResults();

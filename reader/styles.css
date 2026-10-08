@@ -45,6 +45,10 @@ html[data-theme="dark"] {
 
 * { box-sizing: border-box; }
 
+/* 关键兜底：hidden 属性必须永远生效。
+   否则任何在类里写的 display:flex/grid 都会压过 hidden，导致浮层全部常驻显示 */
+[hidden] { display: none !important; }
+
 html, body {
   margin: 0;
   padding: 0;
